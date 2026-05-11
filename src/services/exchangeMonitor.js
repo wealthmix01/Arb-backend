@@ -1,85 +1,102 @@
-const NodeCache = require('node-cache');
+const ccxt = require('ccxt');
 const logger = require('../utils/logger');
-const ExchangeConnector = require('./exchangeConnector');
 
 class ExchangeMonitor {
   constructor() {
-    this.connector = new ExchangeConnector();
-    this.exchanges = this.connector.exchanges;
-    this.cache = new NodeCache({ stdTTL: 10 }); // Cache prices for 10 seconds
-    this.monitoringActive = false;
-    this.pricesCache = {};
-    this.commonSymbols = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'ADA/USDT', 'SOL/USDT'];
+    this.exchanges = {
+      binance: new ccxt.binance(),
+      bybit: new ccxt.bybit(),
+      gateio: new ccxt.gateio(),
+      kraken: new ccxt.kraken(),
+    };
+    this.prices = {};
+    this.monitoring = false;
+    this.monitoringInterval = null;
   }
 
-  async startMonitoring() {
-    if (this.monitoringActive) return;
+  async getPrices() {
+    try {
+      const allPrices = {};
+      
+      for (const [exchangeName, exchange] of Object.entries(this.exchanges)) {
+        try {
+          const ticker = await exchange.fetchTicker('BTC/USDT');
+          allPrices[exchangeName] = {
+            symbol: 'BTC/USDT',
+            bid: ticker.bid,
+            ask: ticker.ask,
+            last: ticker.last,
+            timestamp: ticker.timestamp,
+          };
+        } catch (error) {
+          logger.warn(`Error fetching price from ${exchangeName}:`, error.message);
+          allPrices[exchangeName] = { error: error.message };
+        }
+      }
+      
+      this.prices = allPrices;
+      return allPrices;
+    } catch (error) {
+      logger.error('Error in getPrices:', error);
+      throw error;
+    }
+  }
+
+  async getPricesBySymbol(symbol) {
+    try {
+      const allPrices = {};
+      
+      for (const [exchangeName, exchange] of Object.entries(this.exchanges)) {
+        try {
+          const ticker = await exchange.fetchTicker(symbol);
+          allPrices[exchangeName] = {
+            symbol: symbol,
+            bid: ticker.bid,
+            ask: ticker.ask,
+            last: ticker.last,
+            timestamp: ticker.timestamp,
+          };
+        } catch (error) {
+          logger.warn(`Error fetching ${symbol} from ${exchangeName}:`, error.message);
+          allPrices[exchangeName] = { error: error.message };
+        }
+      }
+      
+      return allPrices;
+    } catch (error) {
+      logger.error(`Error in getPricesBySymbol for ${symbol}:`, error);
+      throw error;
+    }
+  }
+
+  startMonitoring() {
+    if (this.monitoring) {
+      logger.info('Monitoring already started');
+      return;
+    }
     
-    this.monitoringActive = true;
-    logger.info('📊 Exchange Monitor started');
+    this.monitoring = true;
+    logger.info('Starting price monitoring...');
     
-    // Continuous monitoring loop
-    this.monitoringInterval = setInterval(async () => {
-      await this.updatePrices();
-    }, parseInt(process.env.PRICE_CHECK_INTERVAL) || 5000);
+    // Fetch prices immediately
+    this.getPrices();
+    
+    // Then fetch every 30 seconds
+    this.monitoringInterval = setInterval(() => {
+      this.getPrices()
+        .then(() => logger.debug('Prices updated'))
+        .catch(error => logger.error('Error updating prices:', error));
+    }, 30000);
   }
 
   stopMonitoring() {
     if (this.monitoringInterval) {
       clearInterval(this.monitoringInterval);
-    }
-    this.monitoringActive = false;
-    logger.info('📊 Exchange Monitor stopped');
-  }
-
-  async updatePrices() {
-    const prices = {};
-    
-    for (const symbol of this.commonSymbols) {
-      prices[symbol] = {};
-      
-      for (const exchangeName of Object.keys(this.exchanges)) {
-        try {
-          const ticker = await this.connector.fetchTicker(exchangeName, symbol);
-          if (ticker) {
-            prices[symbol][exchangeName] = {
-              bid: ticker.bid,
-              ask: ticker.ask,
-              last: ticker.last,
-              timestamp: new Date().toISOString()
-            };
-          }
-        } catch (error) {
-          // Silently skip errors for individual symbols/exchanges
-        }
-      }
+      this.monitoringInterval = null;
     }
     
-    this.pricesCache = prices;
-  }
-
-  async getPrices() {
-    if (Object.keys(this.pricesCache).length === 0) {
-      await this.updatePrices();
-    }
-    return this.pricesCache;
-  }
-
-  async getPricesBySymbol(symbol) {
-    const normalizedSymbol = symbol.toUpperCase().includes('/') ? symbol.toUpperCase() : `${symbol}/USDT`;
-    
-    if (!this.pricesCache[normalizedSymbol]) {
-      await this.updatePrices();
-    }
-    
-    return {
-      symbol: normalizedSymbol,
-      prices: this.pricesCache[normalizedSymbol] || {}
-    };
-  }
-
-  getCommonPairs() {
-    return this.commonSymbols;
+    this.monitoring = false;
+    logger.info('Price monitoring stopped');
   }
 }
 

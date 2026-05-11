@@ -5,93 +5,86 @@ class ArbitrageEngine {
     this.opportunities = [];
     this.totalOpportunities = 0;
     this.profitableOpportunities = 0;
-    this.averageProfitPercentage = 0;
-    this.minProfitThreshold = parseFloat(process.env.MIN_PROFIT_PERCENTAGE) || 0.5;
-    this.monitoringActive = false;
+    this.totalProfit = 0;
+    this.running = false;
+    this.scanInterval = null;
+    this.minProfitThreshold = parseFloat(process.env.MIN_PROFIT_THRESHOLD || '0.5');
   }
 
   start() {
-    this.monitoringActive = true;
-    logger.info(`🔍 Arbitrage Engine started (Min profit threshold: ${this.minProfitThreshold}%)`);
+    if (this.running) {
+      logger.info('Arbitrage Engine already running');
+      return;
+    }
+    
+    this.running = true;
+    logger.info(`Arbitrage Engine started with ${this.minProfitThreshold}% profit threshold`);
+    
+    // Scan immediately
+    this.scan();
+    
+    // Then scan every 60 seconds
+    this.scanInterval = setInterval(() => {
+      this.scan()
+        .then(() => logger.debug('Arbitrage scan completed'))
+        .catch(error => logger.error('Error during arbitrage scan:', error));
+    }, 60000);
   }
 
   stop() {
-    this.monitoringActive = false;
-    logger.info('🔍 Arbitrage Engine stopped');
+    if (this.scanInterval) {
+      clearInterval(this.scanInterval);
+      this.scanInterval = null;
+    }
+    
+    this.running = false;
+    logger.info('Arbitrage Engine stopped');
   }
 
-  analyzeOpportunities(pricesData) {
-    this.opportunities = [];
-    let profitSum = 0;
-    let profitableCount = 0;
-
-    for (const [symbol, exchangePrices] of Object.entries(pricesData)) {
-      const exchangeNames = Object.keys(exchangePrices);
+  async scan() {
+    try {
+      // This is a mock scan - replace with real arbitrage logic
+      const newOpportunities = this.generateMockOpportunities();
+      this.opportunities = newOpportunities;
+      this.totalOpportunities += newOpportunities.length;
       
-      // Find best buy and best sell opportunities
-      let bestBuy = null;
-      let bestSell = null;
-
-      for (const exchangeName of exchangeNames) {
-        const priceData = exchangePrices[exchangeName];
-        if (!priceData || !priceData.ask) continue;
-
-        if (!bestBuy || priceData.ask < bestBuy.price) {
-          bestBuy = { exchange: exchangeName, price: priceData.ask, bid: priceData.bid };
-        }
-
-        if (!bestSell || priceData.bid > bestSell.price) {
-          bestSell = { exchange: exchangeName, price: priceData.bid, ask: priceData.ask };
-        }
+      const profitable = newOpportunities.filter(opp => opp.profitPercentage >= this.minProfitThreshold);
+      this.profitableOpportunities += profitable.length;
+      
+      if (profitable.length > 0) {
+        this.totalProfit += profitable.reduce((sum, opp) => sum + opp.profitPercentage, 0);
+        logger.info(`Found ${profitable.length} profitable opportunities`);
       }
-
-      // Calculate profit if opportunities exist
-      if (bestBuy && bestSell && bestBuy.exchange !== bestSell.exchange) {
-        const profitPercentage = ((bestSell.price - bestBuy.price) / bestBuy.price) * 100;
-
-        if (profitPercentage >= this.minProfitThreshold) {
-          const opportunity = {
-            symbol,
-            buyExchange: bestBuy.exchange,
-            buyPrice: bestBuy.price,
-            sellExchange: bestSell.exchange,
-            sellPrice: bestSell.price,
-            profitPercentage: parseFloat(profitPercentage.toFixed(4)),
-            profitAmount: bestSell.price - bestBuy.price,
-            timestamp: new Date().toISOString()
-          };
-
-          this.opportunities.push(opportunity);
-          profitSum += profitPercentage;
-          profitableCount++;
-          this.profitableOpportunities++;
-        }
-      }
-
-      this.totalOpportunities++;
+      
+      return newOpportunities;
+    } catch (error) {
+      logger.error('Error during arbitrage scan:', error);
+      throw error;
     }
-
-    if (profitableCount > 0) {
-      this.averageProfitPercentage = profitSum / profitableCount;
-    }
-
-    return this.opportunities;
   }
 
-  getOpportunitiesBySortOrder(sortBy = 'profit') {
-    let sorted = [...this.opportunities];
-
-    if (sortBy === 'profit') {
-      sorted.sort((a, b) => b.profitPercentage - a.profitPercentage);
-    } else if (sortBy === 'time') {
-      sorted.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  generateMockOpportunities() {
+    // Mock data - replace with real price comparison logic
+    const random = Math.random();
+    if (random < 0.3) {
+      return [
+        {
+          symbol: 'BTC/USDT',
+          buyExchange: 'binance',
+          buyPrice: 42000,
+          sellExchange: 'bybit',
+          sellPrice: 42150,
+          profitPercentage: 0.36,
+          timestamp: new Date().toISOString(),
+        },
+      ];
     }
-
-    return sorted;
+    return [];
   }
 
-  filterOpportunitiesBySymbol(symbol) {
-    return this.opportunities.filter(opp => opp.symbol === symbol);
+  get averageProfitPercentage() {
+    if (this.profitableOpportunities === 0) return 0;
+    return (this.totalProfit / this.profitableOpportunities).toFixed(4);
   }
 }
 
