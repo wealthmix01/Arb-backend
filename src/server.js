@@ -9,7 +9,7 @@ const ExchangeMonitor = require('./services/exchangeMonitor');
 const ArbitrageEngine = require('./services/arbitrageEngine');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // Middleware
 app.use(helmet());
